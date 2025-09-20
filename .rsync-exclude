@@ -1,0 +1,15 @@
+*venv
+__pycache__
+*.pyc
+.git
+node_modules
+.DS_Store
+*.log
+.pytest_cache
+.coverage
+dist/
+build/
+*.pt
+results
+pretrained
+output
