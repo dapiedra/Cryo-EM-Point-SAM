@@ -5,6 +5,7 @@ This script demonstrates how to use Point-SAM with your own .ply files.
 """
 
 import sys
+import os
 import argparse
 import hydra
 from omegaconf import OmegaConf
@@ -93,6 +94,12 @@ def main():
     
     args = parser.parse_args()
     
+    # Create output directory if needed
+    output_dir = os.path.dirname(args.output)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Created output directory: {output_dir}")
+    
     print(f"Loading Point-SAM model...")
     
     # Load configuration
@@ -113,6 +120,7 @@ def main():
     
     # Load point cloud
     points = load_ply(args.pointcloud)
+    xyz_original = points[:, :3]  # Keep original coordinates
     xyz = points[:, :3]
     rgb = points[:, 3:6] / 255.0  # Normalize RGB to [0,1]
     
@@ -193,9 +201,10 @@ def main():
     
     print(f"Generated {masks.shape[1]} masks, best mask covers {best_mask.sum()} points")
     
-    # Save result
-    visualize_mask(args.output, xyz, best_mask.cpu().numpy())
+    # Save result using original coordinates
+    visualize_mask(args.output, xyz_original, best_mask.cpu().numpy())
     print(f"Saved segmentation result to {args.output}")
+    print(f"Output coordinates are in original space (before normalization)")
     
     # Print some statistics
     total_points = len(xyz)

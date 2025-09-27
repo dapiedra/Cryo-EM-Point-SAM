@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-Script to extract 3 random points from a PLY file and save them as red points in a new PLY file.
+Script to extract random points from a ground truth PLY file (A) and find their closest 
+corresponding points in a target PLY file (B). This is useful when you have ground truth 
+segmentation data in one file but need to perform segmentation on a different (but similar) file.
+
+The script:
+1. Loads the ground truth PLY file (A) containing the area to segment
+2. Loads the target PLY file (B) that will be used for actual segmentation  
+3. Extracts random/clustered points from the ground truth file
+4. Finds the closest corresponding points in the target file
+5. Saves the closest target points as red points for use as segmentation prompts
 """
 
 import os
@@ -8,6 +17,45 @@ import random
 import argparse
 import numpy as np
 from pc_sam.ply_utils import load_ply, save_ply
+
+
+def find_closest_points(source_points, target_points):
+    """
+    Find the closest points in target_points for each point in source_points.
+    
+    Args:
+        source_points (np.array): Array of source 3D points with shape [N, 3]
+        target_points (np.array): Array of target 3D points with shape [M, 3]
+    
+    Returns:
+        np.array: Closest points from target_points with shape [N, 3]
+        np.array: Indices of closest points in target_points
+        np.array: Distances to closest points
+    """
+    print(f"Finding closest points for {len(source_points)} points in target set of {len(target_points)} points...")
+    
+    closest_points = []
+    closest_indices = []
+    closest_distances = []
+    
+    for i, source_point in enumerate(source_points):
+        # Calculate distances from this source point to all target points
+        distances = np.sqrt(np.sum((target_points - source_point) ** 2, axis=1))
+        
+        # Find the index of the closest point
+        closest_idx = np.argmin(distances)
+        closest_distance = distances[closest_idx]
+        closest_point = target_points[closest_idx]
+        
+        closest_points.append(closest_point)
+        closest_indices.append(closest_idx)
+        closest_distances.append(closest_distance)
+        
+        print(f"  Point {i+1}: Source ({source_point[0]:.6f}, {source_point[1]:.6f}, {source_point[2]:.6f}) "
+              f"-> Target ({closest_point[0]:.6f}, {closest_point[1]:.6f}, {closest_point[2]:.6f}) "
+              f"[distance: {closest_distance:.6f}]")
+    
+    return np.array(closest_points), np.array(closest_indices), np.array(closest_distances)
 
 
 def calculate_distance(p1, p2):
@@ -114,84 +162,101 @@ def select_clustered_points(points, num_points=3, cluster_radius=None):
     return selected_points, best_indices
 
 
-def extract_random_points(input_ply_path, output_ply_path, num_points=3, clustered=False, cluster_radius=None):
+def extract_random_points(ground_truth_ply_path, target_ply_path, output_ply_path, num_points=3, clustered=False, cluster_radius=None):
     """
-    Extract random points from a PLY file and save them as red points.
+    Extract random points from a ground truth PLY file and find their closest matches in a target PLY file.
+    Save the closest points from the target file as red points.
     
     Args:
-        input_ply_path (str): Path to the input PLY file
+        ground_truth_ply_path (str): Path to the ground truth PLY file (file A)
+        target_ply_path (str): Path to the target PLY file (file B) for segmentation
         output_ply_path (str): Path to save the output PLY file
         num_points (int): Number of random points to extract (default: 3)
         clustered (bool): If True, select points close to each other
         cluster_radius (float): Maximum distance for clustered points (auto-estimated if None)
     """
-    print(f"Loading PLY file: {input_ply_path}")
+    print(f"Loading ground truth PLY file: {ground_truth_ply_path}")
     
-    # Load the original PLY file
-    # The load_ply function returns points with shape [N, 6] where columns are [x, y, z, r, g, b]
-    points_data = load_ply(input_ply_path)
+    # Load the ground truth PLY file (file A)
+    ground_truth_data = load_ply(ground_truth_ply_path)
+    print(f"Loaded {ground_truth_data.shape[0]} points from ground truth file")
     
-    print(f"Loaded {points_data.shape[0]} points from {input_ply_path}")
+    print(f"Loading target PLY file: {target_ply_path}")
     
-    # Extract only the xyz coordinates (first 3 columns)
-    points_xyz = points_data[:, :3]
+    # Load the target PLY file (file B)
+    target_data = load_ply(target_ply_path)
+    print(f"Loaded {target_data.shape[0]} points from target file")
     
-    # Select points based on the clustering option
+    # Extract only the xyz coordinates (first 3 columns) from ground truth
+    ground_truth_xyz = ground_truth_data[:, :3]
+    
+    # Extract only the xyz coordinates (first 3 columns) from target
+    target_xyz = target_data[:, :3]
+    
+    # Select points from ground truth based on the clustering option
     if clustered:
-        print(f"Selecting {num_points} clustered points...")
-        selected_points, selected_indices = select_clustered_points(points_xyz, num_points, cluster_radius)
+        print(f"Selecting {num_points} clustered points from ground truth...")
+        selected_gt_points, selected_gt_indices = select_clustered_points(ground_truth_xyz, num_points, cluster_radius)
     else:
-        print(f"Selecting {num_points} random points...")
-        # Randomly select the specified number of points
-        if points_data.shape[0] < num_points:
-            print(f"Warning: PLY file only has {points_data.shape[0]} points, selecting all of them.")
-            selected_indices = list(range(points_data.shape[0]))
+        print(f"Selecting {num_points} random points from ground truth...")
+        # Randomly select the specified number of points from ground truth
+        if ground_truth_data.shape[0] < num_points:
+            print(f"Warning: Ground truth PLY file only has {ground_truth_data.shape[0]} points, selecting all of them.")
+            selected_gt_indices = list(range(ground_truth_data.shape[0]))
         else:
-            selected_indices = random.sample(range(points_data.shape[0]), num_points)
+            selected_gt_indices = random.sample(range(ground_truth_data.shape[0]), num_points)
         
-        selected_points = points_xyz[selected_indices]
+        selected_gt_points = ground_truth_xyz[selected_gt_indices]
     
-    print(f"Selected {len(selected_points)} points:")
-    for i, point in enumerate(selected_points):
-        print(f"  Point {i+1}: ({point[0]:.6f}, {point[1]:.6f}, {point[2]:.6f})")
+    print(f"Selected {len(selected_gt_points)} points from ground truth:")
+    for i, point in enumerate(selected_gt_points):
+        print(f"  GT Point {i+1}: ({point[0]:.6f}, {point[1]:.6f}, {point[2]:.6f})")
+    
+    # Find the closest points in the target file
+    print(f"\nFinding closest matches in target file...")
+    closest_target_points, closest_indices, distances = find_closest_points(selected_gt_points, target_xyz)
+    
+    print(f"\nMatching results:")
+    print(f"  Average distance to closest matches: {np.mean(distances):.6f}")
+    print(f"  Maximum distance to closest match: {np.max(distances):.6f}")
+    print(f"  Minimum distance to closest match: {np.min(distances):.6f}")
     
     # Create red color for all selected points (RGB values in range [0, 1])
-    red_colors = np.array([[1.0, 0.0, 0.0]] * len(selected_points))
+    red_colors = np.array([[1.0, 0.0, 0.0]] * len(closest_target_points))
     
-    # Save the selected points as red points
-    save_ply(output_ply_path, selected_points, red_colors)
+    # Save the closest target points as red points
+    save_ply(output_ply_path, closest_target_points, red_colors)
     
-    print(f"Saved {len(selected_points)} red points to: {output_ply_path}")
+    print(f"\nSaved {len(closest_target_points)} red points (from target file) to: {output_ply_path}")
+    
+    return closest_target_points, closest_indices, distances
 
 
 def main():
     # Set up argument parser
-    parser = argparse.ArgumentParser(description="Extract random or clustered points from a PLY file and save as red points")
+    parser = argparse.ArgumentParser(description="Extract random or clustered points from a ground truth PLY file and find closest matches in a target PLY file")
     parser.add_argument(
-        "--input", 
+        "--ground-truth", 
         type=str, 
-        help="Input PLY file path. If not provided, will use mouse.ply from demo/static/models/"
+        required=True,
+        help="Ground truth PLY file path (file A) - points will be selected from this file"
+    )
+    parser.add_argument(
+        "--target", 
+        type=str, 
+        required=True,
+        help="Target PLY file path (file B) - closest matches will be found in this file for segmentation"
     )
     parser.add_argument(
         "--output", 
         type=str, 
-        help="Output PLY file path. If not provided, will use 'random_points.ply'"
+        help="Output PLY file path. If not provided, will use 'matched_points.ply'"
     )
     parser.add_argument(
         "--num-points", 
         type=int, 
         default=3, 
         help="Number of random points to extract (default: 3)"
-    )
-    parser.add_argument(
-        "--list-models", 
-        action="store_true", 
-        help="List available models in demo/static/models/"
-    )
-    parser.add_argument(
-        "--model", 
-        type=str, 
-        help="Choose a model from demo/static/models/ (e.g., 'mouse', 'rhino', 'scene')"
     )
     parser.add_argument(
         "--clustered", 
@@ -206,58 +271,52 @@ def main():
     
     args = parser.parse_args()
     
-    # Models directory
-    models_dir = "demo/static/models"
-    
-    # List available models if requested
-    if args.list_models:
-        print("Available models in demo/static/models/:")
-        if os.path.exists(models_dir):
-            ply_files = [f for f in os.listdir(models_dir) if f.endswith('.ply')]
-            for i, ply_file in enumerate(sorted(ply_files), 1):
-                print(f"  {i}. {ply_file}")
-        else:
-            print(f"  Models directory not found: {models_dir}")
-        return
-    
-    # Determine input file
-    if args.input:
-        input_path = args.input
-    elif args.model:
-        # Use specified model from demo/static/models/
-        if not args.model.endswith('.ply'):
-            args.model += '.ply'
-        input_path = os.path.join(models_dir, args.model)
-    else:
-        # Default to mouse.ply
-        input_path = os.path.join(models_dir, "mouse.ply")
+    # Get file paths
+    ground_truth_path = args.ground_truth
+    target_path = args.target
     
     # Determine output file
     if args.output:
         output_path = args.output
     else:
-        # Generate output filename based on input and options
-        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        # Generate output filename based on input files and options
+        gt_base_name = os.path.splitext(os.path.basename(ground_truth_path))[0]
+        target_base_name = os.path.splitext(os.path.basename(target_path))[0]
         mode = "clustered" if args.clustered else "random"
-        output_path = f"{base_name}_{mode}_{args.num_points}_points.ply"
+        output_path = f"{gt_base_name}_to_{target_base_name}_{mode}_{args.num_points}_points.ply"
     
-    # Check if input file exists
-    if not os.path.exists(input_path):
-        print(f"Error: Input file does not exist: {input_path}")
-        print("Use --list-models to see available models or provide a valid --input path")
+    # Check if input files exist
+    if not os.path.exists(ground_truth_path):
+        print(f"Error: Ground truth file does not exist: {ground_truth_path}")
         return
+    
+    if not os.path.exists(target_path):
+        print(f"Error: Target file does not exist: {target_path}")
+        return
+    
+    print(f"Ground truth file: {ground_truth_path}")
+    print(f"Target file: {target_path}")
+    print(f"Output file: {output_path}")
     
     # Set random seed for reproducibility (optional)
     random.seed(42)
     np.random.seed(42)
     
-    # Extract random points
+    # Extract random points and find closest matches
     try:
-        extract_random_points(input_path, output_path, args.num_points, args.clustered, args.cluster_radius)
+        closest_points, closest_indices, distances = extract_random_points(
+            ground_truth_path, target_path, output_path, 
+            args.num_points, args.clustered, args.cluster_radius
+        )
+        
         mode = "clustered" if args.clustered else "random"
-        print(f"\nSuccess! Created {output_path} with {args.num_points} {mode} red points.")
+        print(f"\nSuccess! Created {output_path} with {args.num_points} {mode} points matched from ground truth to target.")
+        print(f"You can now use these points as prompts for segmentation on the target file: {target_path}")
+        
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
