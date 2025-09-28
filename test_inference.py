@@ -7,6 +7,7 @@ This script demonstrates how to use Point-SAM with your own .ply files.
 import sys
 import os
 import argparse
+import time
 import hydra
 from omegaconf import OmegaConf
 import numpy as np
@@ -15,6 +16,14 @@ from pc_sam.model.pc_sam import PointCloudSAM
 from pc_sam.utils.torch_utils import replace_with_fused_layernorm
 from safetensors.torch import load_model
 from pc_sam.ply_utils import load_ply, save_ply, visualize_mask
+
+# Global configuration for prompt point limits
+MAX_POSITIVE_POINTS = 1  # Maximum number of positive (red) prompt points to use
+MAX_NEGATIVE_POINTS = 100000  # Maximum number of negative (green) prompt points to use
+
+# Random seed configuration
+# To use a fixed seed for reproducible results, replace the line below with: RANDOM_SEED = 42
+RANDOM_SEED = int(time.time() * 1000000) % 2147483647  # Generate random seed based on current time
 
 
 def normalize_points(points):
@@ -28,39 +37,92 @@ def load_prompt_ply(filepath):
     """
     Load prompt points from a .ply file.
     Expected format: .ply file where RGB colors encode the labels:
-    - Red points (R=255, G=0, B=0) = positive prompts (label=1)
-    - Green points (R=0, G=255, B=0) = negative prompts (label=0)
-    - Any other color = positive prompts (label=1, default)
+    - Red points (R>200, G<100, B<100) = positive prompts (label=1)
+    - Green points (R<100, G>200, B<100) = negative prompts (label=0)
+    - Other colors are filtered out (ignored)
     
     Returns:
         prompt_coords: numpy array of shape [N, 3] with 3D coordinates
         prompt_labels: numpy array of shape [N,] with labels (0 or 1)
     """
     try:
+        # Set random seed for reproducible point selection
+        print(f"Using random seed: {RANDOM_SEED}")
+        np.random.seed(RANDOM_SEED)
+        
         points = load_ply(filepath)
         coords = points[:, :3]  # XYZ coordinates
         rgb = points[:, 3:6]    # RGB colors (0-255 range)
         
-        # Determine labels based on RGB colors
-        labels = []
+        # Filter and determine labels based on RGB colors
+        positive_coords = []
+        negative_coords = []
+        positive_rgb = []
+        negative_rgb = []
+        
         for i in range(len(rgb)):
             r, g, b = rgb[i]
             # Check if it's green (negative prompt)
             if g > 200 and r < 100 and b < 100:  # Mostly green
-                labels.append(0)  # Negative prompt
-            else:
-                labels.append(1)  # Positive prompt (default, including red)
+                negative_coords.append(coords[i])
+                negative_rgb.append(rgb[i])
+            # Check if it's red (positive prompt)
+            elif r > 200 and g < 100 and b < 100:  # Mostly red
+                positive_coords.append(coords[i])
+                positive_rgb.append(rgb[i])
+            # Skip all other colors (not red or green enough)
         
+        # Limit the number of positive and negative points
+        if len(positive_coords) > MAX_POSITIVE_POINTS:
+            # Randomly select MAX_POSITIVE_POINTS from available positive points
+            indices = np.random.choice(len(positive_coords), MAX_POSITIVE_POINTS, replace=False)
+            positive_coords = [positive_coords[i] for i in indices]
+            positive_rgb = [positive_rgb[i] for i in indices]
+            
+        if len(negative_coords) > MAX_NEGATIVE_POINTS:
+            # Randomly select MAX_NEGATIVE_POINTS from available negative points
+            indices = np.random.choice(len(negative_coords), MAX_NEGATIVE_POINTS, replace=False)
+            negative_coords = [negative_coords[i] for i in indices]
+            negative_rgb = [negative_rgb[i] for i in indices]
+        
+        # Combine positive and negative points
+        filtered_coords = positive_coords + negative_coords
+        filtered_rgb = positive_rgb + negative_rgb
+        labels = [1] * len(positive_coords) + [0] * len(negative_coords)
+        
+        if len(filtered_coords) == 0:
+            raise ValueError("No valid red or green prompt points found in the PLY file")
+        
+        coords = np.array(filtered_coords)
         labels = np.array(labels)
+        rgb = np.array(filtered_rgb)
         
-        print(f"Loaded {len(coords)} prompt points:")
-        print(f"  - Positive prompts (label=1): {np.sum(labels == 1)}")
-        print(f"  - Negative prompts (label=0): {np.sum(labels == 0)}")
+        original_points = len(points)
+        # Count original red/green points before limiting
+        original_positive = len([1 for i in range(len(points)) if points[i][5] < 100 and points[i][4] < 100 and points[i][3] > 200])
+        original_negative = len([1 for i in range(len(points)) if points[i][3] < 100 and points[i][5] < 100 and points[i][4] > 200])
         
-        # Print detailed coordinates for each point
-        print("\nDetailed prompt points:")
+        final_points = len(coords)
+        
+        print(f"Original points in PLY: {original_points}")
+        print(f"Point filtering and limiting applied:")
+        print(f"  - Max positive points allowed: {MAX_POSITIVE_POINTS}")
+        print(f"  - Max negative points allowed: {MAX_NEGATIVE_POINTS}")
+        print(f"  - Red points found: {original_positive}")
+        print(f"  - Green points found: {original_negative}")
+        print(f"Final prompt points: {final_points}")
+        print(f"  - Positive prompts used (red, label=1): {np.sum(labels == 1)}")
+        print(f"  - Negative prompts used (green, label=0): {np.sum(labels == 0)}")
+        
+        if original_positive > MAX_POSITIVE_POINTS:
+            print(f"  - Limited positive points: {original_positive} -> {np.sum(labels == 1)} (randomly selected)")
+        if original_negative > MAX_NEGATIVE_POINTS:
+            print(f"  - Limited negative points: {original_negative} -> {np.sum(labels == 0)} (randomly selected)")
+        
+        # Print detailed coordinates for each final point
+        print("\nFinal prompt points (after filtering and limiting):")
         for i, (coord, label) in enumerate(zip(coords, labels)):
-            point_type = "POSITIVE" if label == 1 else "NEGATIVE"
+            point_type = "POSITIVE (RED)" if label == 1 else "NEGATIVE (GREEN)"
             rgb_info = rgb[i]
             print(f"  Point {i+1}: {point_type} - Coordinates: ({coord[0]:.6f}, {coord[1]:.6f}, {coord[2]:.6f}) - RGB: ({rgb_info[0]:.0f}, {rgb_info[1]:.0f}, {rgb_info[2]:.0f})")
         

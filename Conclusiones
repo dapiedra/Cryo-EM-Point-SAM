@@ -1,0 +1,5 @@
+# Formas de mejorar el rendimiento
+
+1- El numero de puntos positivos debe ser bajo (menos de 3)
+2- El numero de puntos negativos puede ser más alto, pero no demasiado (menos de 10)
+3- El algoritmo de KNN para propagar el color funciona bien, darle color al mapa mejora el resultado

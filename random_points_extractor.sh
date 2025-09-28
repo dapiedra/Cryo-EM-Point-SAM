@@ -1,0 +1,1 @@
+python3 random_points_extractor.py --ground-truth input/gt_4400_1.ply --target input/map_4400_1.ply --output input/combined_points_4400_1.ply --num-points 3 --negative-points 8 --distributed
