@@ -1,1 +1,2 @@
-python3 random_points_extractor.py --ground-truth input/gt_4400_1.ply --target input/map_4400_1.ply --output input/combined_points_4400_1.ply --num-points 3 --negative-points 8 --distributed
+#python3 random_points_extractor.py --ground-truth input/gt_4400_1.ply --target input/map_4400_1.ply --output input/combined_points_4400_1.ply --num-points 3 --negative-points 8 --distributed
+python3 random_points_extractor.py --ground-truth input_custom_generated/emd_0044_1_gt.ply --target input_custom_generated/emd_0044_1.ply --output input_custom_generated/emd_0044_1_combined_points.ply --num-points 3 --negative-points 8 --distributed

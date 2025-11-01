@@ -156,10 +156,10 @@ def select_negative_points(target_points, ground_truth_points, num_negative_poin
             
             if len(min_distances) > 0:
                 avg_min_dist = np.mean(min_distances)
-                # Use smaller multiplier for better point distribution - was 5x, now 2x
-                exclusion_radius = avg_min_dist * 2  
+                # Use 3x multiplier for balanced distribution - ensures points are reasonably far but still available
+                exclusion_radius = avg_min_dist * 3  
                 print(f"Auto-estimated exclusion radius from {sample_size} sample points: {exclusion_radius:.6f}")
-                print(f"Using smaller exclusion radius for better negative point distribution")
+                print(f"Negative points will be at least this far from ground truth points")
             else:
                 exclusion_radius = 1.0  # Increased fallback value for large point clouds
         else:
@@ -218,13 +218,15 @@ def select_negative_points(target_points, ground_truth_points, num_negative_poin
     
     # Select points with better spatial distribution
     if len(candidate_indices) >= num_negative_points:
-        if distributed and len(candidate_indices) > num_negative_points * 2:
-            # Use farthest point sampling for better distribution
-            print(f"Using farthest point sampling for better spatial distribution...")
-            selected_indices = farthest_point_sampling(target_points[candidate_indices], num_negative_points)
-            selected_indices = candidate_indices[selected_indices]  # Map back to original indices
+        if distributed:
+            # Always use farthest point sampling when distributed=True for better spatial distribution
+            print(f"Using farthest point sampling for better spatial distribution of negative points...")
+            candidate_points = target_points[candidate_indices]
+            selected_local_indices = farthest_point_sampling(candidate_points, num_negative_points)
+            selected_indices = candidate_indices[selected_local_indices]  # Map back to original indices
         else:
             # Completely random selection from all valid candidates
+            print(f"Using random selection from {len(candidate_indices)} candidates...")
             selected_indices = np.random.choice(candidate_indices, num_negative_points, replace=False)
     else:
         print(f"Warning: Only {len(candidate_indices)} candidates available, selecting all of them.")
@@ -236,9 +238,24 @@ def select_negative_points(target_points, ground_truth_points, num_negative_poin
     selected_distances = min_distances_to_gt[selected_indices]
     print(f"Negative point statistics:")
     print(f"  Number of negative points: {len(selected_negative_points)}")
-    print(f"  Average distance to nearest ground truth: {np.mean(selected_distances):.6f}")
-    print(f"  Min distance to nearest ground truth: {np.min(selected_distances):.6f}")
-    print(f"  Max distance to nearest ground truth: {np.max(selected_distances):.6f}")
+    print(f"  Distance to nearest ground truth point:")
+    print(f"    - Average: {np.mean(selected_distances):.6f}")
+    print(f"    - Min: {np.min(selected_distances):.6f}")
+    print(f"    - Max: {np.max(selected_distances):.6f}")
+    
+    # Calculate pairwise distances between selected negative points for distribution quality
+    if len(selected_negative_points) > 1:
+        pairwise_distances = []
+        for i in range(len(selected_negative_points)):
+            for j in range(i + 1, len(selected_negative_points)):
+                dist = np.sqrt(np.sum((selected_negative_points[i] - selected_negative_points[j]) ** 2))
+                pairwise_distances.append(dist)
+        
+        print(f"  Spatial distribution among negative points:")
+        print(f"    - Average pairwise distance: {np.mean(pairwise_distances):.6f}")
+        print(f"    - Min pairwise distance: {np.min(pairwise_distances):.6f}")
+        print(f"    - Max pairwise distance: {np.max(pairwise_distances):.6f}")
+        print(f"    → Better distribution = larger pairwise distances")
     
     return selected_negative_points, selected_indices.tolist()
 
@@ -557,10 +574,6 @@ def main():
     print(f"Ground truth file: {ground_truth_path}")
     print(f"Target file: {target_path}")
     print(f"Output file: {output_path}")
-    
-    # Set random seed for reproducibility (optional)
-    random.seed(42)
-    np.random.seed(42)
     
     # Extract random points and find closest matches
     try:
