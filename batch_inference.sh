@@ -4,8 +4,8 @@
 # This script processes multiple pairs of PLY files from an input folder
 
 # Configuration
-INPUT_FOLDER="/work/dpierdra/mini_dataset"
-OUTPUT_FOLDER="output"
+INPUT_FOLDER="/work/dpierdra/datasets/dataset_full/test_data_input_5p_20n_no_thr"
+OUTPUT_FOLDER="output_5p_20n_no_thr"
 CONFIG="large"
 CKPT_PATH="./pretrained/model.safetensors"
 

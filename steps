@@ -11,7 +11,7 @@ nvidia-smi
 
 Request an interactive session with GPU:
 salloc --partition=nukwa-v100
-
+salloc --partition=nukwa-v100 --nodelist=nukwa-01.cnca
 
 module load python/3.9.23 gcc/9.3.0 cuda/12.4.0 ninja/1.12.0
 
